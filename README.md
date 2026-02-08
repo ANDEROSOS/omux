@@ -46,3 +46,32 @@ El sistema utiliza las cuentas de usuario nativas de Linux (`/etc/passwd`, `/etc
 - **Usuario Caducado**: Fecha de expiración pasada. El sistema (PAM/SSH) rechaza la conexión automáticamente, resultando en el cierre de conexión tras la autenticación.
 
 Los logs mostrarán "Connection closed" o "Password authentication failed" (dependiendo de la configuración PAM) para usuarios caducados.
+
+## 📱 Configuración de Cliente (NPV Tunnel / HTTP Injector)
+
+Para conectar desde Android usando **NPV Tunnel** o **HTTP Injector**:
+
+### 1. Configuración SSH
+*   **Host/IP**: La IP pública de tu VPS (ej: `34.19.51.198`).
+*   **Puerto**: El puerto donde instalaste Dropbear (Recomendado: **80** o **443**).
+*   **Usuario**: El usuario que creaste (ej: `alex`).
+*   **Contraseña**: La contraseña asignada.
+
+### 2. Configuración del Payload (Websocket)
+Usa este payload para conectar vía Websocket (ajusta el `Host` según tu operadora):
+
+```http
+GET / HTTP/1.1[crlf]
+Host: youtube.com[crlf]
+Upgrade: websocket[crlf]
+Connection: Upgrade[crlf]
+User-Agent: [ua][crlf]
+[crlf]
+```
+*(Reemplaza `youtube.com` por el Bug Host funcional de tu país/operadora, ej: `www.claro.com.ec`)*.
+
+### 3. Proxy Remoto (Opcional)
+Si usas método **SSH + Proxy**, el Proxy Remoto es:
+*   **IP**: Misma IP del VPS.
+*   **Puerto**: El puerto de Squid o Dropbear (ej: 8080 o 80).
+
