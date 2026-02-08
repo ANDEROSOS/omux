@@ -20,7 +20,7 @@ title "INSTALADOR OMUX - SSH DROPBEAR"
 
 print_center "Instalando dependencias..."
 apt-get update -y
-apt-get install -y curl wget lsof
+apt-get install -y curl wget lsof lolcat
 
 # Crear directorio de instalacion
 if [[ ! -d "$INSTALL_DIR" ]]; then
@@ -34,7 +34,11 @@ cp "$DIR/services.sh" "$INSTALL_DIR/"
 cp "$DIR/module.sh" "$INSTALL_DIR/"
 cp "$DIR/menu" "$INSTALL_DIR/"
 cp "$DIR/badvpn-udpgw" "$INSTALL_DIR/"
+cp "$DIR/cleanup.sh" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/"*.sh
+
+# Ejecutar limpieza inicial
+bash "$INSTALL_DIR/cleanup.sh"
 chmod +x "$INSTALL_DIR/menu"
 
 # Cargar funciones de servicios para instalar dropbear

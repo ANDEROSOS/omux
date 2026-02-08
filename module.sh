@@ -39,6 +39,8 @@ msg() {
         -blue)   echo -e "${BLUE}$2${NC}";;
         -cyan)   echo -e "${CYAN}$2${NC}";;
         -white)  echo -e "${WHITE}$2${NC}";;
+        -bar)    bar;;
+        -bar2)   bar2;;
         *)       echo -e "$1";;
     esac
 }
