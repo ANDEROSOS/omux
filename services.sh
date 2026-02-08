@@ -233,6 +233,123 @@ EOF
     enter
 }
 
+# Instalar WebSocket SSH (Python)
+install_ws_python() {
+    title "INSTALAR SSH WEBSOCKET (Python)"
+
+    read -p "  Puerto WebSocket [80]: " WS_PORT
+    [[ -z $WS_PORT ]] && WS_PORT=80
+
+    read -p "  Puerto SSH destino [22]: " SSH_PORT
+    [[ -z $SSH_PORT ]] && SSH_PORT=22
+
+    echo -e "  ${CYAN}Instalando dependencias...${NC}"
+    apt-get update -y &>/dev/null
+    apt-get install -y python3 python3-pip screen &>/dev/null
+
+    # Crear script WebSocket
+    cat > /usr/local/bin/ws-ssh.py <<'WSEOF'
+#!/usr/bin/env python3
+import socket
+import threading
+import sys
+import select
+
+# Configuracion
+LISTEN_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 80
+SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 22
+
+def handle_client(client_socket):
+    try:
+        request = client_socket.recv(8192).decode('utf-8', errors='ignore')
+
+        # Responder con 101 Switching Protocols
+        if 'HTTP' in request or 'CONNECT' in request:
+            response = "HTTP/1.1 101 Switching Protocols\r\n"
+            response += "Upgrade: websocket\r\n"
+            response += "Connection: Upgrade\r\n\r\n"
+            client_socket.send(response.encode())
+
+        # Conectar a SSH local
+        ssh_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ssh_socket.connect(('127.0.0.1', SSH_PORT))
+
+        # Relay bidireccional
+        sockets = [client_socket, ssh_socket]
+        while True:
+            readable, _, exceptional = select.select(sockets, [], sockets, 1)
+            if exceptional:
+                break
+            for sock in readable:
+                data = sock.recv(65536)
+                if not data:
+                    return
+                if sock is client_socket:
+                    ssh_socket.send(data)
+                else:
+                    client_socket.send(data)
+    except Exception as e:
+        pass
+    finally:
+        try:
+            client_socket.close()
+            ssh_socket.close()
+        except:
+            pass
+
+def main():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('0.0.0.0', LISTEN_PORT))
+    server.listen(100)
+    print(f"[*] WebSocket SSH listening on port {LISTEN_PORT} -> SSH {SSH_PORT}")
+
+    while True:
+        client, addr = server.accept()
+        thread = threading.Thread(target=handle_client, args=(client,))
+        thread.daemon = True
+        thread.start()
+
+if __name__ == "__main__":
+    main()
+WSEOF
+
+    chmod +x /usr/local/bin/ws-ssh.py
+
+    # Crear servicio systemd
+    cat > /etc/systemd/system/ws-ssh.service <<EOF
+[Unit]
+Description=WebSocket SSH Tunnel
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/ws-ssh.py $WS_PORT $SSH_PORT
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable ws-ssh &>/dev/null
+    systemctl restart ws-ssh &>/dev/null
+
+    # Abrir puerto
+    ufw allow $WS_PORT/tcp &>/dev/null
+
+    bar
+    msg -green "  WebSocket SSH instalado!"
+    bar2
+    echo -e "  ${YELLOW}Puerto WS:${NC} $WS_PORT"
+    echo -e "  ${YELLOW}Puerto SSH:${NC} $SSH_PORT"
+    echo -e "  ${YELLOW}Estado:${NC} $(systemctl is-active ws-ssh)"
+    bar
+    enter
+}
+
+
 # Gestionar puertos SSH
 gestionar_ssh() {
     title "GESTIONAR PUERTOS SSH"
@@ -306,8 +423,9 @@ menu_servicios() {
         echo -e "  ${GREEN}[2]${NC} > Instalar Stunnel (SSL)"
         echo -e "  ${GREEN}[3]${NC} > Instalar Squid Proxy"
         echo -e "  ${GREEN}[4]${NC} > Instalar BadVPN"
-        echo -e "  ${GREEN}[5]${NC} > Gestionar puertos SSH"
-        echo -e "  ${GREEN}[6]${NC} > Desinstalar servicio"
+        echo -e "  ${GREEN}[5]${NC} > Instalar WebSocket (Python)"
+        echo -e "  ${GREEN}[6]${NC} > Gestionar puertos SSH"
+        echo -e "  ${GREEN}[7]${NC} > Desinstalar servicio"
         echo -e "  ${RED}[0]${NC} > Volver"
 
         bar
@@ -318,8 +436,9 @@ menu_servicios() {
             2) install_stunnel ;;
             3) install_squid ;;
             4) install_badvpn ;;
-            5) gestionar_ssh ;;
-            6) desinstalar_servicio ;;
+            5) install_ws_python ;;
+            6) gestionar_ssh ;;
+            7) desinstalar_servicio ;;
             0) return ;;
             *) msg -red "  Opcion invalida" && sleep 1 ;;
         esac
