@@ -26,12 +26,16 @@ crear_usuario() {
     read -p "  Limite de conexiones: " limite
     [[ -z $limite ]] && limite=1
 
+    # Crear directorio tmp si no existe
+    mkdir -p "${VPS_TMP}"
+    chmod 777 "${VPS_TMP}"
+
     # Crear usuario
     if [[ $dias -eq 0 ]]; then
-        useradd -M -s /bin/false -p $(openssl passwd -1 "$pass") "$usuario" 2>/dev/null
+        useradd -M -s /bin/false -d ${VPS_TMP} -p $(openssl passwd -1 "$pass") "$usuario" 2>/dev/null
     else
         fecha_exp=$(date -d "+${dias} days" +%Y-%m-%d)
-        useradd -M -s /bin/false -e "$fecha_exp" -p $(openssl passwd -1 "$pass") "$usuario" 2>/dev/null
+        useradd -M -s /bin/false -d ${VPS_TMP} -e "$fecha_exp" -p $(openssl passwd -1 "$pass") "$usuario" 2>/dev/null
     fi
 
     if [[ $? -eq 0 ]]; then
