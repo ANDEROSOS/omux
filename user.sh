@@ -74,9 +74,24 @@ eliminar_usuario() {
 
     echo "$usuarios" | nl -w2 -s") "
     bar2
+    
+    # Guardar usuarios en array para seleccionar por numero
+    mapfile -t lista_usuarios <<< "$usuarios"
 
-    read -p "  Usuario a eliminar: " usuario
-    [[ -z $usuario ]] && return
+    read -p "  Usuario a eliminar (numero o nombre): " seleccion
+    [[ -z $seleccion ]] && return
+
+    # Verificar si es numero
+    if [[ "$seleccion" =~ ^[0-9]+$ ]]; then
+        index=$((seleccion-1))
+        if [[ $index -ge 0 && $index -lt ${#lista_usuarios[@]} ]]; then
+            usuario="${lista_usuarios[$index]}"
+        else
+            usuario="$seleccion"
+        fi
+    else
+        usuario="$seleccion"
+    fi
 
     if id "$usuario" &>/dev/null; then
         userdel -f "$usuario" 2>/dev/null
