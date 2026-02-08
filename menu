@@ -1,0 +1,157 @@
+#!/bin/bash
+# MENU OMUX - SSH Dropbear Standalone
+# Basado en ADMRufu - Modificado para OMUX
+
+# Directorio de instalacion (asume ejecucion local o instalada en /etc/omux)
+[[ -d "/etc/omux" ]] && DIR="/etc/omux" || DIR="$(dirname "$(readlink -f "$0")")"
+
+# Cargar modulo y colores
+if [[ -f "$DIR/module.sh" ]]; then
+    source "$DIR/module.sh"
+else
+    # Definicion minima de colores si falla la carga
+    RED='\033[1;31m'
+    GREEN='\033[1;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[1;34m'
+    NC='\033[0m'
+fi
+
+# Funcion para obtener estadisticas de usuarios
+get_stats() {
+    # Inicializar contadores
+    ACTIVA=0
+    EXPIRADA=0
+    BLOQUEADA=0
+    TOTAL=0
+
+    # Obtener usuarios con shell /bin/false (usuarios VPN tipicos)
+    # Excluyendo usuarios de sistema como syslog, nologin, etc.
+    usuarios=$(cat /etc/passwd | grep "/bin/false" | grep -v "syslog\|nologin\|nobody" | cut -d: -f1)
+    
+    current_date=$(date +%s)
+
+    for user in $usuarios; do
+        ((TOTAL++))
+        
+        # Verificar estado de expiracion
+        exp_date_str=$(chage -l "$user" | grep "Account expires" | cut -d: -f2)
+        
+        if [[ "$exp_date_str" == *"never"* ]]; then
+            ((ACTIVA++))
+        else
+            exp_date=$(date -d "$exp_date_str" +%s 2>/dev/null)
+            if [[ $? -eq 0 ]]; then
+                if [[ $current_date -gt $exp_date ]]; then
+                    ((EXPIRADA++))
+                else
+                    ((ACTIVA++))
+                fi
+            else
+                # Si falla leer fecha, asumir activa por defecto (o ajustar segun preferencia)
+                ((ACTIVA++))
+            fi
+        fi
+
+        # Verificar si esta bloqueada (usermod -L lockea password)
+        status_pass=$(passwd -S "$user" | awk '{print $2}')
+        if [[ "$status_pass" == "L" ]]; then
+            ((BLOQUEADA++))
+            # Si esta bloqueada, restamos de activa/expirada para no duplicar conteo visual?
+            # En el screenshot parece ser un contador independiente o estado.
+            # Asumiremos que Bloqueada es un estado que puede solaparse o ser prioritario.
+        fi
+    done
+}
+
+# Banner Principal
+banner_omux() {
+    clear
+    echo -e "${RED}=====================================================${NC}"
+    echo -e "                   ${YELLOW}******OMUX******${NC}"
+    echo -e "${RED}=====================================================${NC}"
+    
+    get_stats
+    
+    echo -e "   ${GREEN}ACTIVA: $ACTIVA    ${RED}EXPIRADA: $EXPIRADA    ${BLUE}BLOQUEADA: $BLOQUEADA    ${YELLOW}TOTAL: $TOTAL${NC}"
+    echo -e "${RED}=====================================================${NC}"
+}
+
+# Menu Principal
+menu_omux() {
+    while true; do
+        banner_omux
+        
+        echo -e "   ${GREEN}[1]> ${WHITE}ADMINISTRAR CUENTAS (SSH/DROPBEAR)${NC}"
+        echo -e "${RED}-----------------------------------------------------${NC}"
+        echo -e "   ${GREEN}[2]> ${WHITE}CONFIGURACION DE PROTOCOLOS${NC}"
+        echo -e "   ${GREEN}[3]> ${WHITE}HERRAMIENTAS EXTRAS${NC}"
+        echo -e "${RED}-----------------------------------------------------${NC}"
+        echo -e "   ${GREEN}[4]> ${WHITE}CONFIGURACION DEL SCRIPT${NC}"
+        echo -e "   ${GREEN}[5]> ${WHITE}IDIOMA / LANGUAGE${NC}"
+        echo -e "${RED}-----------------------------------------------------${NC}"
+        echo -e "   ${GREEN}[6]> ${RED}[!] DESINSTALAR PANEL${NC}"
+        echo -e "${RED}=====================================================${NC}"
+        echo -e "   ${GREEN}[0] ${RED}SALIR DEL VPS   ${GREEN}[7] ${WHITE}SALIR DEL SCRIPT   ${GREEN}[8] ${BLUE}REINICIAR VPS${NC}"
+        echo -e "${RED}=====================================================${NC}"
+        
+        read -p "   Ingresa una Opcion: " opcion
+        
+        case $opcion in
+            1)
+                if [[ -f "$DIR/user.sh" ]]; then
+                    source "$DIR/user.sh"
+                    menu_usuarios
+                else
+                    echo -e "   ${RED}Error: user.sh no encontrado en $DIR${NC}"
+                    sleep 2
+                fi
+                ;;
+            2)
+                if [[ -f "$DIR/services.sh" ]]; then
+                    source "$DIR/services.sh"
+                    menu_servicios
+                else
+                    echo -e "   ${RED}Error: services.sh no encontrado en $DIR${NC}"
+                    sleep 2
+                fi
+                ;;
+            3|4|5)
+                echo -e "   ${YELLOW}Opcion no disponible en version Standalone OMUX (Solo SSH)${NC}"
+                sleep 2
+                ;;
+            6)
+                echo -e "   ${RED}Desinstalando OMUX...${NC}"
+                rm -f /usr/bin/omux /usr/bin/menu
+                rm -rf /etc/omux
+                # Limpiar bashrc si se agrego
+                sed -i '/omux/d' ~/.bashrc
+                echo -e "   ${GREEN}Desinstalado.${NC}"
+                sleep 2
+                exit 0
+                ;;
+            0)
+                exit 0
+                ;;
+            7)
+                exit 0
+                ;;
+            8)
+                reboot
+                ;;
+            *)
+                echo -e "   ${RED}Opcion invalida${NC}"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# Verificacion de root
+if [[ $EUID -ne 0 ]]; then
+   echo "Este script debe ejecutarse como root" 
+   exit 1
+fi
+
+# Ejecutar menu
+menu_omux
