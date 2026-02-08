@@ -1,7 +1,7 @@
 #!/bin/bash
 # GESTION DE SERVICIOS - Menu VPS Libre
 
-source /etc/vpsmenu/module.sh 2>/dev/null || source "$(dirname "$0")/module.sh"
+source /etc/omux/module.sh 2>/dev/null || source "$(dirname "$0")/module.sh"
 
 # Instalar Dropbear
 install_dropbear() {
