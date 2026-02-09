@@ -1,6 +1,6 @@
 #!/bin/bash
-# MODULO DE FUNCIONES - Menu VPS Libre
-# Sin licencia - Uso libre
+# MODULO DE FUNCIONES - OMUX Panel
+# Versión corregida
 
 # Colores
 export RED='\033[1;31m'
@@ -14,14 +14,14 @@ export NC='\033[0m'
 # Directorios
 export VPS_DIR="/etc/omux"
 export VPS_USER="${VPS_DIR}/user"
-export VPS_TMP="${VPS_DIR}/tmp"
+export VPS_TMP="/tmp/omux"
 
 # Crear directorios si no existen
 [[ ! -d ${VPS_DIR} ]] && mkdir -p ${VPS_DIR}
 [[ ! -d ${VPS_USER} ]] && mkdir -p ${VPS_USER}
-[[ ! -d ${VPS_TMP} ]] && mkdir -p ${VPS_TMP}
+[[ ! -d ${VPS_TMP} ]] && mkdir -p ${VPS_TMP} && chmod 777 ${VPS_TMP}
 
-# Funcion para imprimir barra
+# Función para imprimir barra
 bar() {
     echo -e "${RED}=====================================================${NC}"
 }
@@ -30,7 +30,7 @@ bar2() {
     echo -e "${RED}-----------------------------------------------------${NC}"
 }
 
-# Funcion para imprimir mensaje
+# Función para imprimir mensaje
 msg() {
     case $1 in
         -red)    echo -e "${RED}$2${NC}";;
@@ -54,7 +54,7 @@ print_center() {
     printf "%${padding}s%s\n" "" "$text"
 }
 
-# Titulo
+# Título
 title() {
     clear
     bar
@@ -68,15 +68,37 @@ enter() {
     read -p "  Presione ENTER para continuar..."
 }
 
-# Obtener IP publica
+# Obtener IP pública
 get_ip() {
-    curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || echo "No disponible"
+    local ip
+    ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+    [[ -z "$ip" ]] && ip=$(curl -s --max-time 5 icanhazip.com 2>/dev/null)
+    [[ -z "$ip" ]] && ip=$(curl -s --max-time 5 ipinfo.io/ip 2>/dev/null)
+    [[ -z "$ip" ]] && ip="No disponible"
+    echo "$ip"
 }
 
 # Verificar si es root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        msg -red "Este script debe ejecutarse como root"
+        msg -red "  Este script debe ejecutarse como root"
         exit 1
     fi
+}
+
+# Verificar si un puerto está en uso
+check_port() {
+    local puerto=$1
+    if lsof -i :$puerto >/dev/null 2>&1; then
+        return 0  # Puerto en uso
+    else
+        return 1  # Puerto libre
+    fi
+}
+
+# Matar proceso en puerto específico
+kill_port() {
+    local puerto=$1
+    fuser -k -n tcp $puerto 2>/dev/null
+    fuser -k -n udp $puerto 2>/dev/null
 }
