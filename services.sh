@@ -23,11 +23,11 @@ install_dropbear() {
     apt-get update -y &>/dev/null
     apt-get install dropbear -y &>/dev/null
 
-    # Configurar
+    # Configurar con keep-alive
     cat > /etc/default/dropbear <<EOF
 NO_START=0
 DROPBEAR_PORT=$puerto
-DROPBEAR_EXTRA_ARGS=""
+DROPBEAR_EXTRA_ARGS="-K 60"
 DROPBEAR_BANNER="/etc/dropbear/banner"
 DROPBEAR_RECEIVE_WINDOW=65536
 EOF
@@ -61,8 +61,8 @@ install_stunnel() {
     read -p "  Puerto SSL [443]: " puerto_ssl
     [[ -z $puerto_ssl ]] && puerto_ssl=443
 
-    read -p "  Puerto destino (SSH) [22]: " puerto_dest
-    [[ -z $puerto_dest ]] && puerto_dest=22
+    read -p "  Puerto destino [80]: " puerto_dest
+    [[ -z $puerto_dest ]] && puerto_dest=80
 
     echo -e "  ${CYAN}Instalando Stunnel...${NC}"
     bar2
@@ -192,13 +192,11 @@ install_badvpn() {
     echo -e "  ${CYAN}Instalando BadVPN...${NC}"
     bar2
 
-    # Descargar badvpn
     # Instalar desde local si existe
     if [[ -f "/etc/omux/badvpn-udpgw" ]]; then
         echo -e "  ${YELLOW}Instalando desde archivo local...${NC}"
         cp /etc/omux/badvpn-udpgw /usr/bin/badvpn-udpgw
     else
-        # Intentar descargar si no existe local (Fallback)
         echo -e "  ${YELLOW}Descargando BadVPN (Github)...${NC}"
         wget -q -O /usr/bin/badvpn-udpgw "https://github.com/ambrop72/badvpn/releases/download/1.999.130/badvpn-udpgw" 2>/dev/null
     fi
@@ -233,7 +231,7 @@ EOF
     enter
 }
 
-# Instalar WebSocket SSH (Python)
+# Instalar WebSocket SSH (Python) - MEJORADO
 install_ws_python() {
     title "INSTALAR SSH WEBSOCKET (Python)"
 
@@ -244,23 +242,30 @@ install_ws_python() {
     [[ -z $SSH_PORT ]] && SSH_PORT=22
 
     echo -e "  ${CYAN}Instalando dependencias...${NC}"
+    bar2
+    
     apt-get update -y &>/dev/null
-    apt-get install -y python3 python3-pip screen &>/dev/null
+    apt-get install -y python3 python3-pip &>/dev/null
 
-    # Crear script WebSocket
+    # Crear script WebSocket MEJORADO con keep-alive
     cat > /usr/local/bin/ws-ssh.py <<'WSEOF'
 #!/usr/bin/env python3
 import socket
 import threading
 import sys
 import select
+import time
 
 # Configuracion
 LISTEN_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 80
 SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 22
+BUFFER_SIZE = 65536
+TIMEOUT = 300
 
 def handle_client(client_socket):
+    ssh_socket = None
     try:
+        # Recibir peticion inicial
         request = client_socket.recv(8192).decode('utf-8', errors='ignore')
 
         # Responder con 101 Switching Protocols
@@ -272,28 +277,52 @@ def handle_client(client_socket):
 
         # Conectar a SSH local
         ssh_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ssh_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        ssh_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+        ssh_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+        ssh_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
         ssh_socket.connect(('127.0.0.1', SSH_PORT))
 
-        # Relay bidireccional
+        # Keep-alive para client socket
+        client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+
+        # Relay bidireccional con timeout
         sockets = [client_socket, ssh_socket]
+        last_activity = time.time()
+        
         while True:
-            readable, _, exceptional = select.select(sockets, [], sockets, 1)
+            current_time = time.time()
+            if current_time - last_activity > TIMEOUT:
+                break
+                
+            readable, _, exceptional = select.select(sockets, [], sockets, 30)
+            
             if exceptional:
                 break
+                
             for sock in readable:
-                data = sock.recv(65536)
-                if not data:
+                try:
+                    data = sock.recv(BUFFER_SIZE)
+                    if not data:
+                        return
+                    
+                    last_activity = time.time()
+                    
+                    if sock is client_socket:
+                        ssh_socket.sendall(data)
+                    else:
+                        client_socket.sendall(data)
+                except:
                     return
-                if sock is client_socket:
-                    ssh_socket.send(data)
-                else:
-                    client_socket.send(data)
+                    
     except Exception as e:
         pass
     finally:
         try:
-            client_socket.close()
-            ssh_socket.close()
+            if client_socket:
+                client_socket.close()
+            if ssh_socket:
+                ssh_socket.close()
         except:
             pass
 
@@ -302,19 +331,29 @@ def main():
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(('0.0.0.0', LISTEN_PORT))
     server.listen(100)
-    print(f"[*] WebSocket SSH listening on port {LISTEN_PORT} -> SSH {SSH_PORT}")
+    print(f"[*] WebSocket SSH listening on 0.0.0.0:{LISTEN_PORT} -> SSH 127.0.0.1:{SSH_PORT}")
+    print(f"[*] Keep-alive: Enabled | Timeout: {TIMEOUT}s")
 
     while True:
-        client, addr = server.accept()
-        thread = threading.Thread(target=handle_client, args=(client,))
-        thread.daemon = True
-        thread.start()
+        try:
+            client, addr = server.accept()
+            thread = threading.Thread(target=handle_client, args=(client,))
+            thread.daemon = True
+            thread.start()
+        except KeyboardInterrupt:
+            print("\n[!] Stopping server...")
+            break
+        except Exception as e:
+            continue
 
 if __name__ == "__main__":
     main()
 WSEOF
 
     chmod +x /usr/local/bin/ws-ssh.py
+
+    # Detener servicio anterior si existe
+    systemctl stop ws-ssh &>/dev/null
 
     # Crear servicio systemd
     cat > /etc/systemd/system/ws-ssh.service <<EOF
@@ -327,6 +366,8 @@ Type=simple
 ExecStart=/usr/bin/python3 /usr/local/bin/ws-ssh.py $WS_PORT $SSH_PORT
 Restart=always
 RestartSec=3
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -339,16 +380,19 @@ EOF
     # Abrir puerto
     ufw allow $WS_PORT/tcp &>/dev/null
 
+    # Esperar a que inicie
+    sleep 2
+
     bar
     msg -green "  WebSocket SSH instalado!"
     bar2
     echo -e "  ${YELLOW}Puerto WS:${NC} $WS_PORT"
     echo -e "  ${YELLOW}Puerto SSH:${NC} $SSH_PORT"
     echo -e "  ${YELLOW}Estado:${NC} $(systemctl is-active ws-ssh)"
+    echo -e "  ${YELLOW}Keep-Alive:${NC} Enabled (300s timeout)"
     bar
     enter
 }
-
 
 # Gestionar puertos SSH
 gestionar_ssh() {
@@ -361,6 +405,9 @@ gestionar_ssh() {
     read -p "  Nuevos puertos (separados por espacio): " puertos
     [[ -z $puertos ]] && return
 
+    # Backup de configuracion
+    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+
     # Eliminar puertos actuales
     sed -i '/^Port/d' /etc/ssh/sshd_config
 
@@ -370,9 +417,16 @@ gestionar_ssh() {
         ufw allow $p/tcp &>/dev/null
     done
 
+    # Configurar keep-alive en OpenSSH
+    sed -i 's/#ClientAliveInterval 0/ClientAliveInterval 60/g' /etc/ssh/sshd_config
+    sed -i 's/#ClientAliveCountMax 3/ClientAliveCountMax 120/g' /etc/ssh/sshd_config
+    sed -i 's/#TCPKeepAlive yes/TCPKeepAlive yes/g' /etc/ssh/sshd_config
+
     systemctl restart sshd &>/dev/null || systemctl restart ssh &>/dev/null
 
+    bar
     msg -green "  Puertos SSH configurados: $puertos"
+    msg -green "  Keep-alive habilitado"
     enter
 }
 
@@ -384,6 +438,7 @@ desinstalar_servicio() {
     echo -e "  ${GREEN}[2]${NC} > Stunnel (SSL)"
     echo -e "  ${GREEN}[3]${NC} > Squid"
     echo -e "  ${GREEN}[4]${NC} > BadVPN"
+    echo -e "  ${GREEN}[5]${NC} > WebSocket SSH"
     echo -e "  ${RED}[0]${NC} > Volver"
 
     bar
@@ -408,6 +463,13 @@ desinstalar_servicio() {
             rm -f /usr/bin/badvpn-udpgw /etc/systemd/system/badvpn.service
             systemctl daemon-reload
             msg -green "  BadVPN desinstalado"
+            ;;
+        5)
+            systemctl stop ws-ssh &>/dev/null
+            systemctl disable ws-ssh &>/dev/null
+            rm -f /usr/local/bin/ws-ssh.py /etc/systemd/system/ws-ssh.service
+            systemctl daemon-reload
+            msg -green "  WebSocket SSH desinstalado"
             ;;
         0) return ;;
     esac
