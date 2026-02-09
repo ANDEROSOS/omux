@@ -1,14 +1,15 @@
 #!/bin/bash
-# GESTION DE USUARIOS SSH - Menu VPS Libre
+# GESTION DE USUARIOS SSH - OMUX Panel
+# Versión corregida para NPV Tunnel
 
-source /etc/vpsmenu/module.sh 2>/dev/null || source "$(dirname "$0")/module.sh"
+source /etc/omux/module.sh 2>/dev/null || source "$(dirname "$0")/module.sh"
 
 # Crear usuario SSH
 crear_usuario() {
     title "CREAR USUARIO SSH"
 
     read -p "  Nombre de usuario: " usuario
-    [[ -z $usuario ]] && msg -red "  Usuario vacio" && return
+    [[ -z $usuario ]] && msg -red "  Usuario vacio" && enter && return
 
     if id "$usuario" &>/dev/null; then
         msg -red "  El usuario ya existe"
@@ -18,7 +19,7 @@ crear_usuario() {
 
     read -p "  Contrasena: " -s pass
     echo ""
-    [[ -z $pass ]] && msg -red "  Contrasena vacia" && return
+    [[ -z $pass ]] && msg -red "  Contrasena vacia" && enter && return
 
     read -p "  Dias de duracion (0=ilimitado): " dias
     [[ -z $dias ]] && dias=30
@@ -32,10 +33,12 @@ crear_usuario() {
 
     # Crear usuario
     if [[ $dias -eq 0 ]]; then
-        useradd -M -s /bin/false -d ${VPS_TMP} -p $(openssl passwd -1 "$pass") "$usuario" 2>/dev/null
+        useradd -M -s /bin/false -d ${VPS_TMP} "$usuario" 2>/dev/null
+        echo "$usuario:$pass" | chpasswd
     else
         fecha_exp=$(date -d "+${dias} days" +%Y-%m-%d)
-        useradd -M -s /bin/false -d ${VPS_TMP} -e "$fecha_exp" -p $(openssl passwd -1 "$pass") "$usuario" 2>/dev/null
+        useradd -M -s /bin/false -d ${VPS_TMP} -e "$fecha_exp" "$usuario" 2>/dev/null
+        echo "$usuario:$pass" | chpasswd
     fi
 
     if [[ $? -eq 0 ]]; then
@@ -49,7 +52,7 @@ crear_usuario() {
         echo -e "  ${YELLOW}Contrasena:${NC} $pass"
         echo -e "  ${YELLOW}Limite:${NC} $limite conexiones"
         [[ $dias -gt 0 ]] && echo -e "  ${YELLOW}Expira:${NC} $fecha_exp"
-        echo -e "  ${YELLOW}IP:${NC} $(get_ip)"
+        echo -e "  ${YELLOW}IP VPS:${NC} $(get_ip)"
         bar2
     else
         msg -red "  Error al crear usuario"
@@ -65,7 +68,7 @@ eliminar_usuario() {
     echo -e "  ${CYAN}Usuarios existentes:${NC}"
     bar2
 
-    usuarios=$(cat /etc/passwd | grep "/bin/false" | grep -v "syslog\|nologin" | awk -F: '{print $1}')
+    usuarios=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd | grep -v "^$")
     if [[ -z $usuarios ]]; then
         msg -yellow "  No hay usuarios SSH"
         enter
@@ -75,7 +78,7 @@ eliminar_usuario() {
     echo "$usuarios" | nl -w2 -s") "
     bar2
     
-    # Guardar usuarios en array para seleccionar por numero
+    # Guardar usuarios en array
     mapfile -t lista_usuarios <<< "$usuarios"
 
     read -p "  Usuario a eliminar (numero o nombre): " seleccion
@@ -94,7 +97,10 @@ eliminar_usuario() {
     fi
 
     if id "$usuario" &>/dev/null; then
-        userdel -f "$usuario" 2>/dev/null
+        # Matar procesos del usuario
+        pkill -u "$usuario" 2>/dev/null
+        # Eliminar usuario
+        userdel -r "$usuario" 2>/dev/null || userdel -f "$usuario" 2>/dev/null
         rm -f ${VPS_USER}/${usuario}.limit 2>/dev/null
         msg -green "  Usuario $usuario eliminado"
     else
@@ -110,13 +116,21 @@ listar_usuarios() {
     printf "  ${YELLOW}%-15s %-12s %-10s %-8s${NC}\n" "USUARIO" "EXPIRACION" "LIMITE" "ONLINE"
     bar2
 
-    while read line; do
-        [[ -z $line ]] && continue
-        usuario=$(echo $line | cut -d: -f1)
+    usuarios=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd)
+    
+    if [[ -z "$usuarios" ]]; then
+        msg -yellow "  No hay usuarios creados"
+        bar
+        enter
+        return
+    fi
+
+    while read -r usuario; do
+        [[ -z $usuario ]] && continue
 
         # Fecha expiracion
-        exp=$(chage -l "$usuario" 2>/dev/null | grep "Account expires" | cut -d: -f2 | xargs)
-        [[ "$exp" == "never" ]] && exp="Nunca"
+        exp=$(chage -l "$usuario" 2>/dev/null | grep "Account expires" | awk -F: '{print $2}' | xargs)
+        [[ -z "$exp" || "$exp" == "never" ]] && exp="Nunca"
 
         # Limite
         if [[ -f ${VPS_USER}/${usuario}.limit ]]; then
@@ -126,11 +140,10 @@ listar_usuarios() {
         fi
 
         # Conexiones activas
-        online=$(ps -u "$usuario" 2>/dev/null | grep -c sshd)
+        online=$(ps -u "$usuario" 2>/dev/null | grep -c "sshd\|dropbear")
 
         printf "  %-15s %-12s %-10s %-8s\n" "$usuario" "$exp" "$limite" "$online"
-
-    done <<< "$(cat /etc/passwd | grep "/bin/false" | grep -v "syslog\|nologin")"
+    done <<< "$usuarios"
 
     bar
     enter
@@ -151,7 +164,7 @@ cambiar_pass() {
 
     read -p "  Nueva contrasena: " -s pass
     echo ""
-    [[ -z $pass ]] && msg -red "  Contrasena vacia" && return
+    [[ -z $pass ]] && msg -red "  Contrasena vacia" && enter && return
 
     echo "$usuario:$pass" | chpasswd
 
@@ -180,9 +193,15 @@ renovar_usuario() {
     [[ -z $dias ]] && dias=30
 
     fecha_exp=$(date -d "+${dias} days" +%Y-%m-%d)
-    chage -E "$fecha_exp" "$usuario"
+    chage -E "$fecha_exp" "$usuario" 2>/dev/null
 
-    msg -green "  Usuario renovado hasta: $fecha_exp"
+    if [[ $? -eq 0 ]]; then
+        msg -green "  Usuario renovado hasta: $fecha_exp"
+    else
+        msg -yellow "  Renovando usuario..."
+        usermod -e "$fecha_exp" "$usuario" 2>/dev/null
+        msg -green "  Usuario renovado hasta: $fecha_exp"
+    fi
     enter
 }
 
@@ -190,21 +209,23 @@ renovar_usuario() {
 monitor_conexiones() {
     title "MONITOR DE CONEXIONES"
 
-    echo -e "  ${CYAN}Conexiones SSH activas:${NC}"
+    echo -e "  ${CYAN}Conexiones SSH/Dropbear activas:${NC}"
     bar2
 
-    who | grep -v "pts" | head -20
-
+    # Mostrar conexiones SSH
+    who 2>/dev/null | head -20
+    
     bar2
     echo -e "  ${CYAN}Conexiones por usuario:${NC}"
     bar2
 
-    while read line; do
-        [[ -z $line ]] && continue
-        usuario=$(echo $line | cut -d: -f1)
-        online=$(ps -u "$usuario" 2>/dev/null | grep -c sshd)
+    usuarios=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd)
+    
+    while read -r usuario; do
+        [[ -z $usuario ]] && continue
+        online=$(ps -u "$usuario" 2>/dev/null | grep -c "sshd\|dropbear")
         [[ $online -gt 0 ]] && echo -e "  ${GREEN}$usuario${NC}: $online conexion(es)"
-    done <<< "$(cat /etc/passwd | grep "/bin/false" | grep -v "syslog")"
+    done <<< "$usuarios"
 
     bar
     enter
